@@ -1,0 +1,9 @@
+node_modules/
+.env
+temp/
+tmp-audio/
+sessions/
+.wwebjs_auth/
+.wwebjs_cache/
+*.mp3
+*.opus

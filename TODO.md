@@ -1,0 +1,5 @@
+- [x] Criar package.json com script start e dependências solicitadas
+- [x] Criar .gitignore com entradas especificadas
+- [x] Criar Dockerfile exatamente conforme especificação
+- [x] Criar index.js com servidor Express, cliente WhatsApp, comando !musica, validação ADM_AUTORIZADO e limpeza imediata de arquivo
+- [x] Revisar estrutura final dos arquivos gerados
