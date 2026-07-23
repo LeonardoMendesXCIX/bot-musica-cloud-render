@@ -81,6 +81,10 @@ client.on("authenticated", () => {
   console.log("[WHATSAPP] Autenticado com sucesso!");
 });
 
+client.on("auth_failure", (msg) => {
+  console.error("[WHATSAPP] Falha na autenticação:", msg);
+});
+
 client.on("ready", () => console.log("[WHATSAPP] Cliente pronto!"));
 
 // ==========================================
@@ -165,6 +169,11 @@ client.on("message_create", async (msg) => {
   const body = msg.body?.trim() || "";
   const chatId = msg.fromMe ? msg.to : msg.from;
 
+  // Log de diagnóstico para o terminal
+  if (body.toLowerCase().startsWith("!play")) {
+    console.log(`[DEBUG] Comando recebido: ${body}`);
+  }
+
   // A. Interceção de Resposta do Menu Numérico (1 a 10)
   if (userSessions.has(chatId) && /^([1-9]|10)$/.test(body)) {
     const session = userSessions.get(chatId);
@@ -240,10 +249,11 @@ client.on("message_create", async (msg) => {
       "🔍 *A procurar no YouTube...*",
     );
 
-    // Pede 15 resultados para garantir que sobra 10 após filtrar as maiores que 7 minutos
-    const searchCmd = `yt-dlp --print "%(id)s|%(duration)s|%(title)s" --flat-playlist "ytsearch15:${query}"`;
+    // Pede 15 resultados com timeout de 20s e bypass do YouTube (player_client=android)
+    const searchCmd = `yt-dlp --extractor-args "youtube:player_client=android" --print "%(id)s|%(duration)s|%(title)s" --flat-playlist "ytsearch15:${query}"`;
     const searchResult = execSync(searchCmd, {
       stdio: ["ignore", "pipe", "ignore"],
+      timeout: 20000,
     })
       .toString()
       .trim();
@@ -309,7 +319,7 @@ client.on("message_create", async (msg) => {
     console.error("\n[ERRO NA PESQUISA]:", error.message);
     await client.sendMessage(
       chatId,
-      "❌ Erro ao procurar a música. O YouTube pode estar a bloquear temporariamente.",
+      "❌ Erro ao procurar a música. O YouTube pode estar a bloquear temporariamente (Timeout/403).",
     );
     if (searchMsg) await searchMsg.delete(true);
   }
