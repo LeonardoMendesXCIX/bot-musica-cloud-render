@@ -1,123 +1,45 @@
-require("dotenv").config();
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
-const express = require("express");
+const qrcode = require("qrcode-terminal");
 const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
 // ==========================================
-// 1. Servidor Express (Anti-Sleep e QR Code Web)
-// ==========================================
-const app = express();
-const port = process.env.PORT || 10000;
-let lastQrCode = "";
-let isConnected = false;
-
-app.get("/", (req, res) => {
-  if (isConnected) {
-    return res.send(`
-            <html>
-                <body style="display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #121212; margin: 0; font-family: Arial, sans-serif;">
-                    <div style="text-align: center; color: white;">
-                        <h2 style="color: #4CAF50;">✅ Servidor Ativo e Conectado!</h2>
-                        <p>O bot está pronto para receber comandos no WhatsApp.</p>
-                    </div>
-                </body>
-            </html>
-        `);
-  }
-
-  if (lastQrCode) {
-    // Usa API pública para gerar a imagem sem precisar de novas bibliotecas NPM
-    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(lastQrCode)}`;
-    return res.send(`
-            <html>
-                <body style="display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #121212; margin: 0; font-family: Arial, sans-serif;">
-                    <div style="text-align: center; color: white;">
-                        <h2>📱 Escaneie o QR Code</h2>
-                        <p>Aponte o WhatsApp do seu telemóvel para a imagem abaixo:</p>
-                        <img src="${qrImageUrl}" alt="WhatsApp QR Code" style="border: 10px solid white; border-radius: 10px; margin: 20px;" />
-                        <p style="color: #888;">A página não atualiza sozinha. Se o código expirar, recarregue a página (F5).</p>
-                    </div>
-                </body>
-            </html>
-        `);
-  }
-
-  res.send(`
-        <html>
-            <body style="display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #121212; margin: 0; font-family: Arial, sans-serif;">
-                <div style="text-align: center; color: white;">
-                    <h2>Aguardando geração do QR Code...</h2>
-                    <p>Atualize a página em instantes (F5).</p>
-                </div>
-            </body>
-        </html>
-    `);
-});
-
-app.listen(port, () =>
-  console.log(`[HEALTHCHECK] Servidor HTTP ativo na porta ${port}`),
-);
-
-// ==========================================
-// 2. Inicialização do Cliente do WhatsApp
+// CONFIGURAÇÃO DO CLIENTE WHATSAPP (OTIMIZADO PARA WINDOWS)
 // ==========================================
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: "./sessions" }),
   puppeteer: {
     headless: true,
-    // Variável de ambiente configurada no nosso Dockerfile
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
+      "--disable-accelerated-2d-canvas",
       "--no-first-run",
-      "--no-zygote",
-      "--single-process",
       "--disable-gpu",
     ],
   },
 });
 
-client.on("qr", (qr) => {
-  lastQrCode = qr;
-  console.log("==================================================");
-  console.log("⚠️ NOVO QR CODE GERADO!");
-  console.log("👉 ACESSE A SUA PÁGINA WEB NO RENDER PARA ESCANEAR");
-  console.log("==================================================");
-});
-
-client.on("authenticated", () => {
-  console.log("[WHATSAPP] Autenticado com sucesso!");
-});
-
-client.on("ready", () => {
-  isConnected = true;
-  lastQrCode = "";
-  console.log("[WHATSAPP] Cliente pronto para receber comandos!");
-});
-
-client.on("disconnected", () => {
-  isConnected = false;
-  console.log("[WHATSAPP] Cliente desconectado! Aguardando novo scan...");
-});
+client.on("qr", (qr) => qrcode.generate(qr, { small: true }));
+client.on("ready", () =>
+  console.log("[WHATSAPP] Cliente pronto! Aguardando comandos..."),
+);
 
 // ==========================================
-// 3. ESTADO GLOBAL: MENU, FILA E LIMITES
+// ESTADO GLOBAL: MENU, FILA E LIMITES
 // ==========================================
-const userSessions = new Map(); // Guarda as pesquisas temporárias
+const userSessions = new Map(); // Guarda as pesquisas temporárias (TTL)
 const downloadQueue = []; // Fila de downloads pendentes
-let isProcessingQueue = false; // Trava para o motor de download
-const lastSignatureSent = new Map(); // Cooldown da assinatura
+let isProcessingQueue = false; // Lock exclusivo para o motor de download
+const lastSignatureSent = new Map(); // Guarda o timestamp da última assinatura enviada
 
-const MAX_QUEUE_PER_USER = 3; // Máximo de músicas na fila por pessoa
+const MAX_QUEUE_PER_USER = 3;
 const MAX_DURATION_SEC = 420; // 7 minutos
 const SIGNATURE_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 horas
 
 // ==========================================
-// 4. MOTOR DE FILA ASSÍNCRONA (PROCESSA EM BACKGROUND)
+// MOTOR DE FILA ASSÍNCRONA
 // ==========================================
 async function processQueue() {
   if (isProcessingQueue || downloadQueue.length === 0) return;
@@ -132,18 +54,19 @@ async function processQueue() {
   try {
     statusMsg = await client.sendMessage(
       chatId,
-      `⏳ *A baixar a tua música da fila:* ${videoTitle}...`,
+      `⏳ *A processar:* ${videoTitle}...`,
     );
 
     const tmpDir = path.resolve(__dirname, "tmp-audio");
     if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
     tempFilePath = path.join(tmpDir, `audio_${Date.now()}.mp3`);
 
-    // Executa o download com timeout de 60s
-    const command = `yt-dlp -x --audio-format mp3 --audio-quality 128K --no-playlist --extractor-args "youtube:player_client=android" -o "${tempFilePath}" "https://www.youtube.com/watch?v=${videoId}"`;
-    console.log(`[DOWNLOAD] A processar: ${videoTitle}`);
+    const command = `yt-dlp -x --audio-format mp3 --audio-quality 5 --no-playlist -o "${tempFilePath}" "https://www.youtube.com/watch?v=${videoId}"`;
+    console.log(
+      `[PROCESSANDO] Fila restante: ${downloadQueue.length} | Alvo: ${videoTitle}`,
+    );
 
-    execSync(command, { stdio: "ignore", timeout: 60000 });
+    execSync(command, { stdio: "ignore" });
 
     if (fs.existsSync(tempFilePath)) {
       const media = MessageMedia.fromFilePath(tempFilePath);
@@ -154,22 +77,16 @@ async function processQueue() {
       if (now - lastSent >= SIGNATURE_COOLDOWN_MS) {
         await client.sendMessage(
           chatId,
-          "Bot de automação desenvolvido por Leandro a.k.a DropHTTP",
+          "🤖 *Bot desenvolvido por Leandro A.K.A DropHTTP*",
         );
         lastSignatureSent.set(chatId, now);
       }
 
       if (statusMsg) await statusMsg.delete(true);
-    } else {
-      throw new Error("Arquivo não foi gerado pelo yt-dlp.");
     }
   } catch (error) {
     console.error(`[ERRO DOWNLOAD] ${videoTitle}:`, error.message);
-    await client.sendMessage(
-      chatId,
-      `❌ Ocorreu um erro ao baixar: ${videoTitle}`,
-    );
-    if (statusMsg) await statusMsg.delete(true);
+    await client.sendMessage(chatId, `❌ Falha ao processar: ${videoTitle}`);
   } finally {
     if (tempFilePath && fs.existsSync(tempFilePath)) {
       try {
@@ -177,26 +94,18 @@ async function processQueue() {
       } catch (err) {}
     }
     isProcessingQueue = false;
-    processQueue(); // Chama o próximo da fila!
+    processQueue(); // Aciona recursivamente a próxima tarefa
   }
 }
 
 // ==========================================
-// 5. INTERCEÇÃO DE MENSAGENS (FRONTEND DO BOT)
+// INTERCEÇÃO DE MENSAGENS E FRONTEND
 // ==========================================
 client.on("message_create", async (msg) => {
-  // Ignora status
-  if (msg.from === "status@broadcast") return;
-
   const body = msg.body?.trim() || "";
   const chatId = msg.fromMe ? msg.to : msg.from;
 
-  // Log de diagnóstico para o terminal do Render
-  if (body.toLowerCase().startsWith("!play")) {
-    console.log(`[DEBUG] Comando recebido de ${chatId}: ${body}`);
-  }
-
-  // A. Interceção de Resposta do Menu Numérico (1 a 10)
+  // A. Interceção de Resposta do Menu Numérico
   if (userSessions.has(chatId) && /^([1-9]|10)$/.test(body)) {
     const session = userSessions.get(chatId);
     const selectedIndex = parseInt(body) - 1;
@@ -215,7 +124,7 @@ client.on("message_create", async (msg) => {
     if (userPendingTasks >= MAX_QUEUE_PER_USER) {
       await client.sendMessage(
         chatId,
-        `⚠️ *Limite Atingido:* Já tens ${MAX_QUEUE_PER_USER} músicas na fila de espera. Aguarda a entrega antes de pedir mais.`,
+        `⚠️ *Limite Atingido:* Possui ${MAX_QUEUE_PER_USER} ficheiros pendentes na fila. Aguarde.`,
       );
       return;
     }
@@ -234,21 +143,21 @@ client.on("message_create", async (msg) => {
     const position = downloadQueue.length;
     await client.sendMessage(
       chatId,
-      `✅ *Adicionado à fila!* Posição atual: ${position}\nO áudio será enviado assim que for processado.`,
+      `✅ *Na fila de processamento.* Posição: ${position}`,
     );
 
     processQueue();
     return;
   }
 
-  // B. Interceção do Comando Base
+  // B. Interceção do Comando Base (!play)
   if (!body.toLowerCase().startsWith("!play")) return;
 
   const query = body.replace(/^!play\s*/i, "").trim();
   if (!query) {
     await client.sendMessage(
       chatId,
-      "❌ Por favor, informe o nome da música ou artista. Exemplo: !play in the end linkin park",
+      "❌ Sintaxe incorreta. Utilize: !play [nome da música]",
     );
     return;
   }
@@ -260,24 +169,19 @@ client.on("message_create", async (msg) => {
 
   let searchMsg;
   try {
-    searchMsg = await client.sendMessage(
-      chatId,
-      "🔍 *A procurar no YouTube...*",
-    );
+    console.log(`[PESQUISA] Usuário: ${chatId} | Termo: ${query}`);
+    searchMsg = await client.sendMessage(chatId, "🔍 *A pesquisar...*");
 
-    // Timeout de 20s na pesquisa e bypass do YouTube
-    const searchCmd = `yt-dlp --extractor-args "youtube:player_client=android" --print "%(id)s|%(duration)s|%(title)s" --flat-playlist "ytsearch15:${query}"`;
+    // ytsearch15 garante margem para filtrar vídeos maiores que 7min
+    const searchCmd = `yt-dlp --print "%(id)s|%(duration)s|%(title)s" --flat-playlist "ytsearch15:${query}"`;
     const searchResult = execSync(searchCmd, {
       stdio: ["ignore", "pipe", "ignore"],
-      timeout: 20000,
     })
       .toString()
       .trim();
 
     if (!searchResult) {
-      await client.sendMessage(chatId, "❌ Nenhum resultado encontrado.");
-      if (searchMsg) await searchMsg.delete(true);
-      return;
+      throw new Error("Retorno vazio do yt-dlp");
     }
 
     const lines = searchResult.split("\n");
@@ -291,6 +195,7 @@ client.on("message_create", async (msg) => {
         const title = parts.slice(2).join("|");
 
         if (duration === "NA" || !duration) continue;
+
         const durationSec = parseInt(duration, 10);
         if (isNaN(durationSec) || durationSec > MAX_DURATION_SEC) continue;
 
@@ -302,50 +207,44 @@ client.on("message_create", async (msg) => {
     if (results.length === 0) {
       await client.sendMessage(
         chatId,
-        "❌ Todas as versões encontradas excedem o limite de 7 minutos de duração.",
+        "❌ Nenhuma versão encontrada com menos de 7 minutos.",
       );
       if (searchMsg) await searchMsg.delete(true);
       return;
     }
 
-    let menuText = `🔍 *Encontrei ${results.length} resultados (Menos de 7 min):*\n\n`;
+    let menuText = `🎵 *Selecione uma opção (1-${results.length}):*\n\n`;
     results.forEach((res, index) => {
       const min = Math.floor(res.durationSec / 60);
       const sec = (res.durationSec % 60).toString().padStart(2, "0");
       menuText += `*${index + 1}.* ${res.title} _(${min}:${sec})_\n`;
     });
 
-    menuText += `\n👉 *Responda com um número de 1 a ${results.length} para baixar.*`;
-
     const timeout = setTimeout(() => {
       userSessions.delete(chatId);
-      client.sendMessage(
-        chatId,
-        "⏳ O menu de escolha expirou. Envie !play novamente.",
-      );
+      client.sendMessage(chatId, "⏳ Sessão expirada.");
     }, 60000);
 
     userSessions.set(chatId, { results, timeout });
     await client.sendMessage(chatId, menuText);
     if (searchMsg) await searchMsg.delete(true);
   } catch (error) {
-    console.error("\n[ERRO NA PESQUISA]:", error.message);
+    console.error("[ERRO PESQUISA]:", error.message);
     await client.sendMessage(
       chatId,
-      "❌ Erro ao procurar a música. O YouTube pode estar a bloquear temporariamente ou a ligação expirou.",
+      "❌ Falha ao comunicar com os servidores de pesquisa.",
     );
     if (searchMsg) await searchMsg.delete(true);
   }
 });
 
-// Prevenção de quebras globais
 process.on("unhandledRejection", (reason) =>
-  console.error("[SISTEMA] Rejeição não tratada:", reason),
+  console.error("[ALERTA] Rejeição assíncrona:", reason),
 );
 process.on("uncaughtException", (err) =>
-  console.error("[SISTEMA] Exceção não capturada:", err),
+  console.error("[FATAL] Exceção crítica:", err),
 );
 
 client
   .initialize()
-  .catch((err) => console.error("Erro na inicialização:", err));
+  .catch((err) => console.error("Falha crítica na inicialização:", err));
