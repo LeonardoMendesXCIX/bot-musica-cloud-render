@@ -1,36 +1,20 @@
 require("dotenv").config();
-const { Client, RemoteAuth, MessageMedia } = require("whatsapp-web.js");
+const { Client, RemoteAuth } = require("whatsapp-web.js");
 const { MongoStore } = require("wwebjs-mongo");
 const mongoose = require("mongoose");
 const express = require("express");
-const { execSync } = require("child_process");
-const fs = require("fs");
+const qrcode = require("qrcode");
 
 const app = express();
-app.get("/", (req, res) => res.send("Bot Vivo"));
-app.listen(process.env.PORT || 10000, () => console.log("Servidor Web Ativo"));
-
-console.log("[DEBUG] O script iniciou.");
-
-if (!process.env.MONGO_URI) {
-  console.error(
-    "[ERRO FATAL] MONGO_URI não encontrada nas variáveis de ambiente!",
-  );
-  process.exit(1);
-} else {
-  console.log("[DEBUG] MONGO_URI encontrada e carregada.");
-}
-
-// Heartbeat: Imprime a cada 10s para saber se o bot não "morreu"
-setInterval(() => console.log("[HEARTBEAT] O bot está vivo..."), 10000);
+app.get("/", (req, res) => res.send("Bot Online"));
+app.listen(process.env.PORT || 10000);
 
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
-    console.log("[MONGO] Conectado com sucesso!");
+    console.log("[MONGO] Conectado!");
     const store = new MongoStore({ mongoose: mongoose });
 
-    console.log("[DEBUG] Iniciando Client...");
     const client = new Client({
       authStrategy: new RemoteAuth({
         store: store,
@@ -38,23 +22,19 @@ mongoose
       }),
       puppeteer: {
         headless: true,
-        executablePath: "/usr/bin/google-chrome-stable",
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        executablePath: "/usr/bin/chromium",
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+        ],
       },
     });
 
-    client.on("qr", (qr) =>
-      console.log(
-        "[QR] QR Code gerado. (Verificar log para ver se chega aqui)",
-      ),
-    );
-    client.on("authenticated", () => console.log("[WHATSAPP] Autenticado!"));
+    client.on("qr", (qr) => console.log("[QR] Gerado (veja na página web)"));
     client.on("ready", () => console.log("[WHATSAPP] Cliente pronto!"));
-    client.on("auth_failure", (e) => console.error("[FATAL] Auth failure:", e));
+    client.on("authenticated", () => console.log("[WHATSAPP] Autenticado!"));
 
-    console.log("[DEBUG] Chamando initialize()...");
-    client
-      .initialize()
-      .catch((err) => console.error("[FATAL] Erro no initialize:", err));
+    client.initialize().catch((err) => console.error("[FATAL] Erro:", err));
   })
-  .catch((err) => console.error("[MONGO] Erro na conexão:", err));
+  .catch((err) => console.error("[MONGO] Erro:", err));
