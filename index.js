@@ -7,6 +7,8 @@ const util = require("util");
 
 const execPromise = util.promisify(exec);
 
+const sessionsPath = path.resolve(__dirname, "sessions");
+
 // ==========================================
 // 1. SERVIDOR WEB (QR CODE E HEALTHCHECK)
 // ==========================================
@@ -62,13 +64,14 @@ const client = new Client({
     headless: true,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
     args: [
+      "--disable-dev-shm-usage",
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage", // Crítico para evitar OOM no Render
-      "--disable-extensions",
-      "--disable-accelerated-2d-canvas",
       "--disable-gpu",
-      "--single-process", // Otimiza uso de RAM
+      "--disable-extensions",
+      "--single-process",
+      "--memory-pressure-off",
+      "--disable-accelerated-2d-canvas",
     ],
   },
 });
@@ -77,6 +80,16 @@ client.on("qr", (qr) => {
   console.log("[SISTEMA] Novo QR Code gerado. Aceda ao endpoint web.");
   lastQrCode = qr;
 });
+
+client.on("authenticated", () =>
+  console.log("[DEBUG-AUTH] Autenticado com sucesso!"),
+);
+
+client.on("auth_failure", (msg) => console.error("[DEBUG-AUTH] Falha:", msg));
+
+client.on("loading_screen", (percent, message) =>
+  console.log("[DEBUG-LOADING]", percent, message),
+);
 
 client.on("ready", () => {
   console.log("[SISTEMA] Cliente WhatsApp estabilizado e pronto.");
@@ -274,6 +287,23 @@ process.on("uncaughtException", (err) =>
 );
 
 setTimeout(() => {
+  try {
+    if (!fs.existsSync(sessionsPath)) {
+      fs.mkdirSync(sessionsPath, { recursive: true });
+      console.log("[DEBUG-INIT] Pasta sessions criada:", sessionsPath);
+    } else {
+      console.log("[DEBUG-INIT] Pasta sessions encontrada:", sessionsPath);
+    }
+
+    fs.accessSync(sessionsPath, fs.constants.W_OK);
+    console.log("[DEBUG-INIT] Permissão de escrita OK em sessions.");
+  } catch (err) {
+    console.error(
+      "[DEBUG-INIT] Erro ao validar pasta sessions (escrita/existência):",
+      err.message,
+    );
+  }
+
   client
     .initialize()
     .catch((err) => console.error("Falha na inicialização:", err));
