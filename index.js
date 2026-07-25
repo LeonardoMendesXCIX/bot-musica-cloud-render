@@ -65,6 +65,7 @@ const client = new Client({
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage", // Crítico para evitar OOM no Render
+      "--disable-extensions",
       "--disable-accelerated-2d-canvas",
       "--disable-gpu",
       "--single-process", // Otimiza uso de RAM
@@ -272,6 +273,8 @@ process.on("uncaughtException", (err) =>
   console.error("[FATAL] Exceção crítica:", err),
 );
 
-client
-  .initialize()
-  .catch((err) => console.error("Falha na inicialização:", err));
+setTimeout(() => {
+  client
+    .initialize()
+    .catch((err) => console.error("Falha na inicialização:", err));
+}, 5000);
