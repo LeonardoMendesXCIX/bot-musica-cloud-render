@@ -1,5 +1,5 @@
-- [x] Criar package.json com script start e dependências solicitadas
-- [x] Criar .gitignore com entradas especificadas
-- [x] Criar Dockerfile exatamente conforme especificação
-- [x] Criar index.js com servidor Express, cliente WhatsApp, comando !musica, validação ADM_AUTORIZADO e limpeza imediata de arquivo
-- [x] Revisar estrutura final dos arquivos gerados
+- [x] Remover dependência e uso de `qrcode` no `index.js`
+- [x] Alterar rota `GET /` para usar QR externo (`api.qrserver.com`) com `lastQrCode`
+- [x] Garantir manutenção da porta `process.env.PORT || 10000`
+- [x] Preservar toda a lógica de negócio existente sem alterações
+- [x] Validar sintaxe e consistência final do `index.js`

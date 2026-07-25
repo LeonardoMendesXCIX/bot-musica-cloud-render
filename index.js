@@ -1,5 +1,4 @@
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
-const qrcode = require("qrcode");
 const express = require("express");
 const { exec } = require("child_process");
 const fs = require("fs");
@@ -13,7 +12,7 @@ const execPromise = util.promisify(exec);
 // ==========================================
 const app = express();
 const port = process.env.PORT || 10000;
-let currentQR = "";
+let lastQrCode = "";
 let isConnected = false;
 
 app.get("/", async (req, res) => {
@@ -22,21 +21,19 @@ app.get("/", async (req, res) => {
       '<h1 style="color:green; text-align:center; font-family:sans-serif; margin-top:50px;">✅ Servidor Ativo e Bot Conectado</h1>',
     );
   }
-  if (currentQR) {
-    try {
-      const qrImage = await qrcode.toDataURL(currentQR);
-      return res.send(`
+
+  if (lastQrCode) {
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(lastQrCode)}`;
+    return res.send(`
                 <div style="text-align:center; font-family:sans-serif; margin-top:50px;">
                     <h2>Escaneie o QR Code</h2>
-                    <img src="${qrImage}" style="width:300px; height:300px; border:1px solid #ccc; border-radius:10px;">
+                    <img src="${qrUrl}" style="width:300px; height:300px; border:1px solid #ccc; border-radius:10px;">
                     <p><small>A página atualizará automaticamente...</small></p>
                     <script>setTimeout(() => window.location.reload(), 5000);</script>
                 </div>
             `);
-    } catch (err) {
-      return res.status(500).send("Erro na renderização do QR Code.");
-    }
   }
+
   res.send(
     '<h3 style="text-align:center; font-family:sans-serif; margin-top:50px;">⏳ Aguardando geração do QR Code...</h3><script>setTimeout(() => window.location.reload(), 3000);</script>',
   );
@@ -77,13 +74,13 @@ const client = new Client({
 
 client.on("qr", (qr) => {
   console.log("[SISTEMA] Novo QR Code gerado. Aceda ao endpoint web.");
-  currentQR = qr;
+  lastQrCode = qr;
 });
 
 client.on("ready", () => {
   console.log("[SISTEMA] Cliente WhatsApp estabilizado e pronto.");
   isConnected = true;
-  currentQR = "";
+  lastQrCode = "";
 });
 
 client.on("disconnected", () => {
