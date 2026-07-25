@@ -1,33 +1,47 @@
-require('dotenv').config();
-const { Client, RemoteAuth } = require('whatsapp-web.js');
-const { MongoStore } = require('wwebjs-mongo');
-const mongoose = require('mongoose');
-const express = require('express');
-const qrcode = require('qrcode-terminal');
+require("dotenv").config();
+const { Client, RemoteAuth } = require("whatsapp-web.js");
+const { MongoStore } = require("wwebjs-mongo");
+const mongoose = require("mongoose");
+const express = require("express");
+const qrcode = require("qrcode");
 
 const app = express();
-app.get('/', (req, res) => res.send('Bot Online'));
-app.listen(process.env.PORT || 10000);
+const port = process.env.PORT || 10000;
+let lastQr = "";
 
-console.log('[DEBUG] Iniciando...');
+app.get("/", async (req, res) => {
+  if (lastQr) {
+    const url = await qrcode.toDataURL(lastQr);
+    res.send(`<h1>Escaneie o QR Code</h1><img src="${url}" />`);
+  } else {
+    res.send("<h1>Bot Conectado!</h1>");
+  }
+});
+app.listen(port, () => console.log("Servidor web ativo na porta", port));
 
-mongoose.connect(process.env.MONGO_URI).then(() => {
-    console.log('[MONGO] Conectado!');
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => {
     const store = new MongoStore({ mongoose: mongoose });
-    
     const client = new Client({
-        authStrategy: new RemoteAuth({ store: store, backupSyncIntervalMs: 300000 }),
-        puppeteer: {
-            headless: true,
-            executablePath: '/usr/bin/chromium',
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
-        }
+      authStrategy: new RemoteAuth({
+        store: store,
+        backupSyncIntervalMs: 300000,
+      }),
+      puppeteer: {
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      },
     });
 
-    client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
-    client.on('ready', () => console.log('[WHATSAPP] Cliente pronto!'));
-    client.on('authenticated', () => console.log('[WHATSAPP] Autenticado!'));
-
-    client.initialize().catch(err => console.error('[FATAL] Erro:', err));
-    
-}).catch(err => console.error('[MONGO] Erro:', err));
+    client.on("qr", (qr) => {
+      lastQr = qr;
+      console.log("QR Gerado. Verifique o seu link do Railway!");
+    });
+    client.on("ready", () => {
+      lastQr = "";
+      console.log("Bot pronto!");
+    });
+    client.initialize().catch((e) => console.error(e));
+  })
+  .catch((e) => console.error(e));
