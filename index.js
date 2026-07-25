@@ -1,45 +1,97 @@
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
-const qrcode = require("qrcode-terminal");
-const { execSync } = require("child_process");
+const qrcode = require("qrcode");
+const express = require("express");
+const { exec } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const util = require("util");
+
+const execPromise = util.promisify(exec);
 
 // ==========================================
-// CONFIGURAÇÃO DO CLIENTE WHATSAPP (OTIMIZADO PARA WINDOWS)
+// 1. SERVIDOR WEB (QR CODE E HEALTHCHECK)
 // ==========================================
-const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: "./sessions" }),
-  puppeteer: {
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-accelerated-2d-canvas",
-      "--no-first-run",
-      "--disable-gpu",
-    ],
-  },
+const app = express();
+const port = process.env.PORT || 10000;
+let currentQR = "";
+let isConnected = false;
+
+app.get("/", async (req, res) => {
+  if (isConnected) {
+    return res.send(
+      '<h1 style="color:green; text-align:center; font-family:sans-serif; margin-top:50px;">✅ Servidor Ativo e Bot Conectado</h1>',
+    );
+  }
+  if (currentQR) {
+    try {
+      const qrImage = await qrcode.toDataURL(currentQR);
+      return res.send(`
+                <div style="text-align:center; font-family:sans-serif; margin-top:50px;">
+                    <h2>Escaneie o QR Code</h2>
+                    <img src="${qrImage}" style="width:300px; height:300px; border:1px solid #ccc; border-radius:10px;">
+                    <p><small>A página atualizará automaticamente...</small></p>
+                    <script>setTimeout(() => window.location.reload(), 5000);</script>
+                </div>
+            `);
+    } catch (err) {
+      return res.status(500).send("Erro na renderização do QR Code.");
+    }
+  }
+  res.send(
+    '<h3 style="text-align:center; font-family:sans-serif; margin-top:50px;">⏳ Aguardando geração do QR Code...</h3><script>setTimeout(() => window.location.reload(), 3000);</script>',
+  );
 });
 
-client.on("qr", (qr) => qrcode.generate(qr, { small: true }));
-client.on("ready", () =>
-  console.log("[WHATSAPP] Cliente pronto! Aguardando comandos..."),
-);
+app.listen(port, () => console.log(`[REDE] Servidor HTTP na porta ${port}`));
 
 // ==========================================
-// ESTADO GLOBAL: MENU, FILA E LIMITES
+// 2. ESTADO E REGRAS DE NEGÓCIO
 // ==========================================
-const userSessions = new Map(); // Guarda as pesquisas temporárias (TTL)
-const downloadQueue = []; // Fila de downloads pendentes
-let isProcessingQueue = false; // Lock exclusivo para o motor de download
-const lastSignatureSent = new Map(); // Guarda o timestamp da última assinatura enviada
+const userSessions = new Map();
+const downloadQueue = [];
+let isProcessingQueue = false;
+const lastSignatureSent = new Map();
 
 const MAX_QUEUE_PER_USER = 3;
 const MAX_DURATION_SEC = 420; // 7 minutos
 const SIGNATURE_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 horas
 
 // ==========================================
-// MOTOR DE FILA ASSÍNCRONA
+// 3. CONFIGURAÇÃO DO CLIENTE WHATSAPP
+// ==========================================
+const client = new Client({
+  authStrategy: new LocalAuth({ dataPath: "./sessions" }),
+  puppeteer: {
+    headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage", // Crítico para evitar OOM no Render
+      "--disable-accelerated-2d-canvas",
+      "--disable-gpu",
+      "--single-process", // Otimiza uso de RAM
+    ],
+  },
+});
+
+client.on("qr", (qr) => {
+  console.log("[SISTEMA] Novo QR Code gerado. Aceda ao endpoint web.");
+  currentQR = qr;
+});
+
+client.on("ready", () => {
+  console.log("[SISTEMA] Cliente WhatsApp estabilizado e pronto.");
+  isConnected = true;
+  currentQR = "";
+});
+
+client.on("disconnected", () => {
+  isConnected = false;
+});
+
+// ==========================================
+// 4. MOTOR ASSÍNCRONO DE DOWNLOAD
 // ==========================================
 async function processQueue() {
   if (isProcessingQueue || downloadQueue.length === 0) return;
@@ -62,11 +114,9 @@ async function processQueue() {
     tempFilePath = path.join(tmpDir, `audio_${Date.now()}.mp3`);
 
     const command = `yt-dlp -x --audio-format mp3 --audio-quality 5 --no-playlist -o "${tempFilePath}" "https://www.youtube.com/watch?v=${videoId}"`;
-    console.log(
-      `[PROCESSANDO] Fila restante: ${downloadQueue.length} | Alvo: ${videoTitle}`,
-    );
 
-    execSync(command, { stdio: "ignore" });
+    // Uso de exec Promise evita bloqueio da Thread principal do Node
+    await execPromise(command);
 
     if (fs.existsSync(tempFilePath)) {
       const media = MessageMedia.fromFilePath(tempFilePath);
@@ -77,15 +127,17 @@ async function processQueue() {
       if (now - lastSent >= SIGNATURE_COOLDOWN_MS) {
         await client.sendMessage(
           chatId,
-          "🤖 *Bot desenvolvido por Leandro A.K.A DropHTTP*",
+          "🤖 *Bot de automação | Leonardo Mendes*",
         );
         lastSignatureSent.set(chatId, now);
       }
-
       if (statusMsg) await statusMsg.delete(true);
     }
   } catch (error) {
-    console.error(`[ERRO DOWNLOAD] ${videoTitle}:`, error.message);
+    console.error(
+      `[ERRO] Falha no processamento de ${videoTitle}:`,
+      error.message,
+    );
     await client.sendMessage(chatId, `❌ Falha ao processar: ${videoTitle}`);
   } finally {
     if (tempFilePath && fs.existsSync(tempFilePath)) {
@@ -94,27 +146,23 @@ async function processQueue() {
       } catch (err) {}
     }
     isProcessingQueue = false;
-    processQueue(); // Aciona recursivamente a próxima tarefa
+    processQueue(); // Aciona recursividade para o próximo da fila
   }
 }
 
 // ==========================================
-// INTERCEÇÃO DE MENSAGENS E FRONTEND
+// 5. MÁQUINA DE ESTADOS E COMANDOS
 // ==========================================
 client.on("message_create", async (msg) => {
   const body = msg.body?.trim() || "";
   const chatId = msg.fromMe ? msg.to : msg.from;
 
-  // A. Interceção de Resposta do Menu Numérico
   if (userSessions.has(chatId) && /^([1-9]|10)$/.test(body)) {
     const session = userSessions.get(chatId);
     const selectedIndex = parseInt(body) - 1;
 
     if (selectedIndex >= session.results.length) {
-      await client.sendMessage(
-        chatId,
-        "❌ Opção inválida. Escolha um número que esteja na lista.",
-      );
+      await client.sendMessage(chatId, "❌ Opção inválida.");
       return;
     }
 
@@ -124,13 +172,12 @@ client.on("message_create", async (msg) => {
     if (userPendingTasks >= MAX_QUEUE_PER_USER) {
       await client.sendMessage(
         chatId,
-        `⚠️ *Limite Atingido:* Possui ${MAX_QUEUE_PER_USER} ficheiros pendentes na fila. Aguarde.`,
+        `⚠️ Limite atingido (${MAX_QUEUE_PER_USER} ficheiros pendentes).`,
       );
       return;
     }
 
     const selectedVideo = session.results[selectedIndex];
-
     downloadQueue.push({
       chatId: chatId,
       videoId: selectedVideo.id,
@@ -140,25 +187,19 @@ client.on("message_create", async (msg) => {
     clearTimeout(session.timeout);
     userSessions.delete(chatId);
 
-    const position = downloadQueue.length;
     await client.sendMessage(
       chatId,
-      `✅ *Na fila de processamento.* Posição: ${position}`,
+      `✅ *Na fila de processamento.* (Posição: ${downloadQueue.length})`,
     );
-
     processQueue();
     return;
   }
 
-  // B. Interceção do Comando Base (!play)
   if (!body.toLowerCase().startsWith("!play")) return;
 
   const query = body.replace(/^!play\s*/i, "").trim();
   if (!query) {
-    await client.sendMessage(
-      chatId,
-      "❌ Sintaxe incorreta. Utilize: !play [nome da música]",
-    );
+    await client.sendMessage(chatId, "❌ Sintaxe incorreta: !play [nome]");
     return;
   }
 
@@ -169,20 +210,13 @@ client.on("message_create", async (msg) => {
 
   let searchMsg;
   try {
-    console.log(`[PESQUISA] Usuário: ${chatId} | Termo: ${query}`);
     searchMsg = await client.sendMessage(chatId, "🔍 *A pesquisar...*");
 
-    // ytsearch15 garante margem para filtrar vídeos maiores que 7min
     const searchCmd = `yt-dlp --print "%(id)s|%(duration)s|%(title)s" --flat-playlist "ytsearch15:${query}"`;
-    const searchResult = execSync(searchCmd, {
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
+    const { stdout } = await execPromise(searchCmd, { timeout: 20000 });
+    const searchResult = stdout.trim();
 
-    if (!searchResult) {
-      throw new Error("Retorno vazio do yt-dlp");
-    }
+    if (!searchResult) throw new Error("Retorno vazio.");
 
     const lines = searchResult.split("\n");
     const results = [];
@@ -195,7 +229,6 @@ client.on("message_create", async (msg) => {
         const title = parts.slice(2).join("|");
 
         if (duration === "NA" || !duration) continue;
-
         const durationSec = parseInt(duration, 10);
         if (isNaN(durationSec) || durationSec > MAX_DURATION_SEC) continue;
 
@@ -207,13 +240,13 @@ client.on("message_create", async (msg) => {
     if (results.length === 0) {
       await client.sendMessage(
         chatId,
-        "❌ Nenhuma versão encontrada com menos de 7 minutos.",
+        "❌ Nenhuma versão encontrada dentro do limite (7 min).",
       );
       if (searchMsg) await searchMsg.delete(true);
       return;
     }
 
-    let menuText = `🎵 *Selecione uma opção (1-${results.length}):*\n\n`;
+    let menuText = `🎵 *Resultados (1-${results.length}):*\n\n`;
     results.forEach((res, index) => {
       const min = Math.floor(res.durationSec / 60);
       const sec = (res.durationSec % 60).toString().padStart(2, "0");
@@ -222,7 +255,7 @@ client.on("message_create", async (msg) => {
 
     const timeout = setTimeout(() => {
       userSessions.delete(chatId);
-      client.sendMessage(chatId, "⏳ Sessão expirada.");
+      client.sendMessage(chatId, "⏳ Sessão de pesquisa expirada.");
     }, 60000);
 
     userSessions.set(chatId, { results, timeout });
@@ -230,10 +263,7 @@ client.on("message_create", async (msg) => {
     if (searchMsg) await searchMsg.delete(true);
   } catch (error) {
     console.error("[ERRO PESQUISA]:", error.message);
-    await client.sendMessage(
-      chatId,
-      "❌ Falha ao comunicar com os servidores de pesquisa.",
-    );
+    await client.sendMessage(chatId, "❌ Falha ao processar pesquisa.");
     if (searchMsg) await searchMsg.delete(true);
   }
 });
@@ -247,4 +277,4 @@ process.on("uncaughtException", (err) =>
 
 client
   .initialize()
-  .catch((err) => console.error("Falha crítica na inicialização:", err));
+  .catch((err) => console.error("Falha na inicialização:", err));
