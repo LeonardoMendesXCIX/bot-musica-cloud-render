@@ -47,7 +47,7 @@ mongoose.connect(process.env.MONGO_URI).then(() => {
 
     client.on('qr', (qr) => {
         lastQrCode = qr;
-        console.log('[QR] QR Code gerado.');
+        console.log('[QR] QR Code gerado. Aceda à URL do Render para escanear.');
     });
 
     client.on('authenticated', () => {
@@ -55,12 +55,18 @@ mongoose.connect(process.env.MONGO_URI).then(() => {
         console.log('[WHATSAPP] Autenticado com sucesso!');
     });
 
+    client.on('remote_session_saved', () => console.log('[MONGO] Sessão guardada na nuvem!'));
+    
     client.on('ready', () => {
         lastQrCode = '';
         console.log('[WHATSAPP] Cliente pronto!');
     });
 
-    // Lógica de Fila e Música
+    client.on('error', (err) => console.error('[WHATSAPP] Erro:', err));
+
+    // ==========================================
+    // LÓGICA DE FILA E MÚSICA (Beta 1.0)
+    // ==========================================
     const userSessions = new Map();
     const downloadQueue = [];
     let isProcessingQueue = false;
@@ -87,6 +93,7 @@ mongoose.connect(process.env.MONGO_URI).then(() => {
             if (fs.existsSync(tempFilePath)) {
                 const media = MessageMedia.fromFilePath(tempFilePath);
                 await client.sendMessage(chatId, media);
+                
                 const now = Date.now();
                 const lastSent = lastSignatureSent.get(chatId) || 0;
                 if (now - lastSent >= SIGNATURE_COOLDOWN_MS) {
@@ -95,7 +102,8 @@ mongoose.connect(process.env.MONGO_URI).then(() => {
                 }
             }
         } catch (error) {
-            console.error(`[ERRO] Falha: ${error.message}`);
+            console.error(`[ERRO] Falha no download: ${error.message}`);
+            await client.sendMessage(chatId, `❌ Erro ao processar: ${videoTitle}`);
         } finally {
             if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
             isProcessingQueue = false;
@@ -114,7 +122,7 @@ mongoose.connect(process.env.MONGO_URI).then(() => {
             downloadQueue.push({ chatId, videoId: session.results[selectedIndex].id, videoTitle: session.results[selectedIndex].title });
             clearTimeout(session.timeout);
             userSessions.delete(chatId);
-            await client.sendMessage(chatId, `✅ *Adicionado à fila!*`);
+            await client.sendMessage(chatId, `✅ *Adicionado à fila!* Posição: ${downloadQueue.length}`);
             processQueue();
             return;
         }
@@ -144,5 +152,17 @@ mongoose.connect(process.env.MONGO_URI).then(() => {
         }
     });
 
+    console.log('[DEBUG] A chamar client.initialize()...');
     client.initialize().catch(err => console.error('[FATAL] Erro:', err));
-}).catch(err => console.error('[MONGO] Erro na conexão:', err));
+}).catch(err => console.error('[MONGO] Erro crítico na conexão:', err));
+```
+
+### Próximos passos:
+1.  Cole o código no seu `index.js`.
+2.  No terminal do VS Code, execute:
+    ```bash
+    git add .
+    git commit -m "Fix: Index completo com logs e RemoteAuth"
+    git push origin main
+    ```
+3.  Vá à dashboard do Render e monitore os logs. Assim que vir `[WHATSAPP] Cliente pronto!`, o bot estará a funcionar. Se ainda assim não responder, envie-me o print do log exatamente como ele aparece depois da mensagem "Cliente pronto!". 🚀
