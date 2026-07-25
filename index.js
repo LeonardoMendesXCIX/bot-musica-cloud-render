@@ -8,7 +8,6 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-// 1. Servidor Web (Anti-Sleep e QR Code)
 const app = express();
 const port = process.env.PORT || 10000;
 let lastQrCode = '';
@@ -17,7 +16,7 @@ app.get('/', async (req, res) => {
     if (lastQrCode) {
         try {
             const qrImage = await qrcode.toDataURL(lastQrCode);
-            res.send(`<html><body style="text-align:center; padding-top:50px;"><h1>Escaneie o QR Code</h1><img src="${qrImage}" /><p>Se não carregar, atualize a página.</p></body></html>`);
+            res.send(`<html><body style="text-align:center; padding-top:50px;"><h1>Escaneie o QR Code</h1><img src="${qrImage}" /></body></html>`);
         } catch (err) {
             res.status(500).send("Erro ao gerar QR Code");
         }
@@ -27,8 +26,6 @@ app.get('/', async (req, res) => {
 });
 app.listen(port, () => console.log(`[HTTP] Servidor ativo na porta ${port}`));
 
-// 2. Conexão MongoDB e Inicialização do Bot
-console.log('[DEBUG] Conectando ao MongoDB...');
 mongoose.connect(process.env.MONGO_URI).then(() => {
     console.log('[MONGO] Conectado com sucesso!');
     const store = new MongoStore({ mongoose: mongoose });
@@ -60,9 +57,6 @@ mongoose.connect(process.env.MONGO_URI).then(() => {
         console.log('[WHATSAPP] Cliente pronto!');
     });
 
-    // ==========================================
-    // LÓGICA DE FILA E MÚSICA
-    // ==========================================
     const userSessions = new Map();
     const downloadQueue = [];
     let isProcessingQueue = false;
@@ -99,7 +93,6 @@ mongoose.connect(process.env.MONGO_URI).then(() => {
             }
         } catch (error) {
             console.error(`[ERRO] Falha no download: ${error.message}`);
-            await client.sendMessage(chatId, `❌ Erro ao processar: ${videoTitle}`);
         } finally {
             if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
             isProcessingQueue = false;
@@ -118,7 +111,7 @@ mongoose.connect(process.env.MONGO_URI).then(() => {
             downloadQueue.push({ chatId, videoId: session.results[selectedIndex].id, videoTitle: session.results[selectedIndex].title });
             clearTimeout(session.timeout);
             userSessions.delete(chatId);
-            await client.sendMessage(chatId, `✅ *Adicionado à fila!* Posição: ${downloadQueue.length}`);
+            await client.sendMessage(chatId, `✅ *Adicionado à fila!*`);
             processQueue();
             return;
         }
@@ -149,17 +142,4 @@ mongoose.connect(process.env.MONGO_URI).then(() => {
     });
 
     client.initialize().catch(err => console.error('[FATAL] Erro:', err));
-}).catch(err => console.error('[MONGO] Erro crítico na conexão:', err));
-```
-
-### Comandos para atualizar:
-
-No seu terminal, digite exatamente isto:
-
-```bash
-git add .
-git commit -m "Fix: Index completo e limpo"
-git push origin main
-```
-
-Assim que o Render terminar o deploy, verifique os logs. Se ele disser `[MONGO] Conectado com sucesso!` e depois `[WHATSAPP] Cliente pronto!`, o bot está finalmente estável. 🚀
+}).catch(err => console.error('[MONGO] Erro na conexão:', err));
