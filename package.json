@@ -1,5 +1,5 @@
 {
-  "name": "bot-musica-cloud",
+  "name": "bot-musica-cloud-render",
   "version": "1.0.0",
   "description": "WhatsApp Music Bot - Cloud Edition",
   "main": "index.js",
@@ -7,10 +7,10 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "dotenv": "^16.6.1",
     "express": "^4.19.2",
-    "mongoose": "^9.8.0",
-    "qrcode": "^1.5.3",
-    "whatsapp-web.js": "^1.23.0",
+    "mongoose": "^8.3.0",
+    "whatsapp-web.js": "^1.26.0",
     "wwebjs-mongo": "^1.1.0"
   }
 }
